@@ -6,6 +6,7 @@ package character
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 
 	"github.com/rafvazl/mestre-virtual/internal/knowledge"
@@ -51,7 +52,9 @@ func (c *Character) Alive() bool { return c.HP > 0 }
 // delta efetivamente aplicado.
 func (c *Character) ApplyHPChange(delta int) int {
 	before := c.HP
-	c.HP += delta
+	// Soma saturada: delta vem do LLM (via parser) e pode ser enorme; com
+	// soma comum, uma "cura" de math.MaxInt dava overflow e matava o personagem.
+	c.HP = satAdd(c.HP, delta)
 	if c.HP < 0 {
 		c.HP = 0
 	}
@@ -69,8 +72,24 @@ func (c *Character) AddItem(itemID string, qty int) error {
 	if c.Inventory == nil {
 		c.Inventory = map[string]int{}
 	}
+	// Recusa em vez de dar overflow (que deixaria a quantidade negativa).
+	if c.Inventory[itemID] > math.MaxInt-qty {
+		return fmt.Errorf("%w: overflow de %s", ErrInvalidAmount, itemID)
+	}
 	c.Inventory[itemID] += qty
 	return nil
+}
+
+// satAdd soma a e b saturando em math.MinInt/math.MaxInt.
+func satAdd(a, b int) int {
+	s := a + b
+	if b > 0 && s < a {
+		return math.MaxInt
+	}
+	if b < 0 && s > a {
+		return math.MinInt
+	}
+	return s
 }
 
 // RemoveItem remove qty unidades de itemID; falha sem alterar nada se não houver o bastante.
