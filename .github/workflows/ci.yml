@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      fuzz:
+        description: "Rodar fuzz curto do parser"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-go@v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "arquivos fora do gofmt:"; echo "$out"; exit 1; fi
+      - name: vet
+        run: go vet ./...
+      - name: test -race
+        run: go test -race ./...
+      - name: build
+        run: go build ./cmd/mestre-virtual
+
+  # Fuzz curto: roda em push na main e sob demanda; não bloqueia PRs.
+  fuzz:
+    needs: test
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.fuzz)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-go@v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: fuzz ParseResponse
+        run: go test -run='^$' -fuzz=FuzzParseResponse -fuzztime=30s ./internal/llm
+      - name: guarda o caso que falhou
+        if: failure()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: fuzz-corpus
+          path: internal/llm/testdata/fuzz
