@@ -28,3 +28,12 @@ func TestStreamMatchesGenerate(t *testing.T) {
 		t.Fatalf("parsed %+v errs %v", parsed, errs)
 	}
 }
+
+func TestEchoUsesLastLine(t *testing.T) {
+	p := NewEchoProvider()
+	resp, _ := p.Generate(context.Background(), llm.Request{Prompt: "## Contexto\nmuita coisa\n\nAria (aria): abro a porta\n"})
+	parsed, _ := llm.ParseResponse(resp.Text)
+	if parsed.Narrative != "O mestre ouve: Aria (aria): abro a porta" {
+		t.Fatalf("narrativa %q", parsed.Narrative)
+	}
+}
