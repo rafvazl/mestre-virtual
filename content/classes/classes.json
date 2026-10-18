@@ -1,0 +1,4 @@
+[
+  {"id": "guerreiro", "name": "Guerreiro", "description": "Combatente treinado em armas e armaduras.", "hit_die": 10, "base_hp": 12, "starting_items": ["espada-curta", "pocao-cura"]},
+  {"id": "mago", "name": "Mago", "description": "Estudioso das artes arcanas.", "hit_die": 6, "base_hp": 7, "starting_items": ["cajado", "tocha"]}
+]

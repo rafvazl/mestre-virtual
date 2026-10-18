@@ -1,0 +1,4 @@
+[
+  {"id": "entrada-cripta", "name": "Entrada da cripta", "description": "Degraus de pedra descem para a escuridão; o ar cheira a mofo.", "hazards": ["degraus escorregadios"], "exits": ["salao-ossos"]},
+  {"id": "salao-ossos", "name": "Salão dos ossos", "description": "Nichos nas paredes guardam ossadas antigas.", "hazards": ["esqueletos inquietos"], "exits": ["entrada-cripta"]}
+]

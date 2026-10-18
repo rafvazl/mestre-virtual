@@ -31,3 +31,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# mestre-virtual
+/data/
+/mestre-virtual
+/bin/

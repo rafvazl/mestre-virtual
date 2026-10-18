@@ -1,0 +1,7 @@
+[
+  {"id": "espada-curta", "name": "Espada curta", "description": "Lâmina simples de ferro.", "weight": 1.0, "value": 10, "tags": ["arma", "corpo-a-corpo"], "damage": "1d6"},
+  {"id": "pocao-cura", "name": "Poção de cura", "description": "Líquido vermelho que restaura vigor.", "weight": 0.5, "value": 50, "tags": ["consumivel", "cura"]},
+  {"id": "tocha", "name": "Tocha", "description": "Ilumina corredores escuros por uma hora.", "weight": 1.0, "value": 1, "tags": ["utilitario"]},
+  {"id": "cajado", "name": "Cajado", "description": "Bastão de carvalho, foco arcano.", "weight": 2.0, "value": 5, "tags": ["arma", "foco"], "damage": "1d4"},
+  {"id": "moeda-ouro", "name": "Moeda de ouro", "description": "Moeda cunhada com a efígie de um rei esquecido.", "weight": 0.01, "value": 1, "tags": ["tesouro"]}
+]
