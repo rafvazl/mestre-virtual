@@ -39,6 +39,16 @@ go build -o mestre-virtual ./cmd/mestre-virtual
 go test ./...
 ```
 
+## Memória (Fase 5)
+
+`internal/memory` dá ao LLM contexto relevante e limitado de sessões anteriores e da atual.
+
+- **Modelo.** Cada `memory.Entry` é um fato, evento ou resumo, com sessão, `Refs` tipadas (`npc:guardiao`, `item:espada-curta`) e importância em [0,1]. Persistência em `data/memory/<campaignID>.json` (escrita atômica, como `internal/storage`); a `Store` é segura para uso concorrente.
+- **Recall determinístico e explicável.** `score = 0.50·relevância + 0.25·refs + 0.15·recência + 0.10·importância`, todos em [0,1] e expostos em `Scored.Breakdown`. Relevância é BM25-lite sobre texto normalizado (minúsculas, sem acentos, stopwords, plural leve — "guardiões" casa com "guardião"); recência cai pela metade a cada 3 sessões. Um `Embedder` opcional (ainda sem implementação real) entra com 50% da relevância.
+- **Compactação.** `Compactor` troca as entradas de uma sessão encerrada (ou as mais antigas, acima de um limite) por um resumo — via `LLMSummarizer` ou o fallback determinístico `ExtractiveSummarizer`. As originais ficam arquivadas e o resumo guarda seus IDs (`Summarizes`).
+- **Prompt.** `ContextBuilder.Build(ctx, query, orçamentoTokens)` escolhe entradas por score até caber no orçamento (tokens ≈ runas/4), sem cortar nenhuma no meio.
+- **Eventos.** `EventRecorder.Handle` pode ser inscrito com `Dispatcher.SubscribeAll` para gravar `campaign.LogEntry` automaticamente e compactar em `SessionEnded`.
+
 ## Limitações conhecidas
 
 - A CLI usa só a stdlib (sem Cobra) e não há SDK de LLM real: o ambiente onde o projeto foi iniciado não tinha acesso a `proxy.golang.org`. Os pontos de troca estão documentados no código (`cmd/mestre-virtual`, `internal/llm/remote`).
@@ -53,7 +63,7 @@ go test ./...
 | 2 | Campanha, personagem, storage, parser estruturado, máquina de turno, eventos | ✅ |
 | 3 | Loop de narração jogável na CLI | ⏳ |
 | 4 | Integrar turno + eventos ao loop | ⏳ |
-| 5 | `internal/memory` (memória de aventura) | ⏳ |
+| 5 | `internal/memory` (memória de aventura) | ✅ |
 | 6 | Testes, logging estruturado, ADRs | ⏳ |
 
 Cada fase entra por uma branch própria e um pull request, com este README atualizado no mesmo PR.
