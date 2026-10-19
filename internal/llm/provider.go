@@ -47,6 +47,16 @@ type Provider interface {
 	Generate(ctx context.Context, req Request) (Response, error)
 	// Stream produz a resposta em chunks. O canal é fechado ao final.
 	// Um erro retornado diretamente significa que o stream nem começou.
+	//
+	// Contrato de cancelamento:
+	//   - Provider: ao ver ctx cancelado, para de produzir e fecha o canal
+	//     logo. Pode (não precisa) enviar antes um Chunk com Err = ctx.Err(),
+	//     sem bloquear se ninguém estiver lendo.
+	//   - Consumidor: drena o canal até o fechamento (para não prender a
+	//     goroutine do provider) e, ao final, checa ctx.Err(). Um stream que
+	//     fechou "limpo" com ctx cancelado está truncado: deve ser tratado
+	//     como falha de geração e nada do que chegou pode ser aplicado.
+	//     game.Engine segue esse contrato.
 	Stream(ctx context.Context, req Request) (<-chan Chunk, error)
 }
 
