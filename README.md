@@ -64,6 +64,26 @@ Comandos do REPL: `/status` (PV e inventário), `/quem <id>` (troca o personagem
 - A CLI usa só a stdlib (sem Cobra) e não há SDK de LLM real: o ambiente onde o projeto foi iniciado não tinha acesso a `proxy.golang.org`. Os pontos de troca estão documentados no código (`cmd/mestre-virtual`, `internal/llm/remote`).
 - `local` é um eco determinístico; `remote` sempre retorna `llm.ErrNotConfigured`.
 
+## Qualidade (Fase 6)
+
+```bash
+make ci                 # gofmt -l, go vet, go test -race (o mesmo que o CI)
+make fuzz FUZZTIME=1m   # fuzz de llm.ParseResponse
+make cover              # cobertura total
+```
+
+- Decisões de arquitetura: [`docs/adr/`](docs/adr/README.md).
+- CI: `.github/workflows/ci.yml` (vet, gofmt, `test -race`; fuzz curto em push na `main`).
+- Logging estruturado (`internal/obs`, `log/slog`) ainda não está ligado na CLI. Para ligar, envolva o provider:
+
+```go
+logger, _ := obs.NewLogger(obs.Options{Level: slog.LevelInfo, Format: obs.FormatJSON}) // escreve em stderr
+p, _ := factory.New(cfg)
+p = obs.NewLoggingProvider(p, logger) // obs.WithPromptLogging() para logar o prompt (só em dev)
+```
+
+Cada chamada gera uma linha com provider, duração, tamanhos de prompt/resposta, chunks, tempo até o primeiro chunk e erro; o conteúdo do prompt só é logado com `WithPromptLogging`.
+
 ## Roadmap
 
 | Fase | Escopo | Status |
@@ -74,6 +94,6 @@ Comandos do REPL: `/status` (PV e inventário), `/quem <id>` (troca o personagem
 | 3 | Loop de narração jogável na CLI | ✅ |
 | 4 | Integrar turno + eventos ao loop | ⏳ |
 | 5 | `internal/memory` (memória de aventura) | ⏳ |
-| 6 | Testes, logging estruturado, ADRs | ⏳ |
+| 6 | Testes, logging estruturado, ADRs | ✅ |
 
 Cada fase entra por uma branch própria e um pull request, com este README atualizado no mesmo PR.

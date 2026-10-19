@@ -118,7 +118,13 @@ func (s *FileStore) list(kind string) ([]string, error) {
 		if e.IsDir() || strings.HasPrefix(n, ".") || !strings.HasSuffix(n, ".json") {
 			continue
 		}
-		ids = append(ids, strings.TrimSuffix(n, ".json"))
+		id := strings.TrimSuffix(n, ".json")
+		// Arquivo com nome fora do padrão (ex.: "notas antigas.json") não é
+		// carregável por Load; listá-lo quebraria quem itera sobre a lista.
+		if !validID.MatchString(id) {
+			continue
+		}
+		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	return ids, nil
