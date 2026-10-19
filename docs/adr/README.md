@@ -15,6 +15,7 @@ e o status da antiga passa a "substituída por NNNN".
 | [0006](0006-cli-stdlib-flag-sem-sdks.md) | CLI com `flag` da stdlib e sem SDKs | aceito (restrição de ambiente) |
 | [0007](0007-persistencia-json-escrita-atomica.md) | Persistência em arquivos JSON com escrita atômica | aceito |
 | [0008](0008-recover-em-handlers-de-eventos.md) | `recover` nos handlers do `events.Dispatcher` | aceito |
+| [0009](0009-turno-abortavel-e-cancelamento-do-stream.md) | Turno abortável, passar a vez e cancelamento do stream | aceito |
 
 ## Modelo
 
