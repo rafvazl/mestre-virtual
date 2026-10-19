@@ -12,7 +12,7 @@ import (
 func TestPlay(t *testing.T) {
 	content := filepath.Join("..", "..", "content")
 	data := t.TempDir()
-	var out bytes.Buffer
+	var out, logs bytes.Buffer
 	for _, c := range [][]string{{"aria", "Aria", "guerreiro"}, {"bruno", "Bruno", "mago"}} {
 		args := []string{"character", "create", "-content", content, "-data", data, "-id", c[0], "-name", c[1], "-class", c[2]}
 		if err := run(args, &out); err != nil {
@@ -22,15 +22,16 @@ func TestPlay(t *testing.T) {
 	play := func(stdin string, extra ...string) string {
 		t.Helper()
 		out.Reset()
+		logs.Reset()
 		args := append([]string{"play", "-content", content, "-data", data, "-campaign", "cripta"}, extra...)
-		if err := runIO(args, strings.NewReader(stdin), &out); err != nil {
+		if err := runIO(args, strings.NewReader(stdin), &out, &logs); err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, out.String())
 		}
 		return out.String()
 	}
 
 	// Campanha nova exige personagens e ambiente.
-	if err := runIO([]string{"play", "-content", content, "-data", data, "-campaign", "cripta"}, strings.NewReader(""), &out); err == nil {
+	if err := runIO([]string{"play", "-content", content, "-data", data, "-campaign", "cripta"}, strings.NewReader(""), &out, &logs); err == nil {
 		t.Fatal("criar campanha sem -chars/-env deveria falhar")
 	}
 
@@ -54,6 +55,9 @@ func TestPlay(t *testing.T) {
 	if strings.Contains(got, "[MECHANICS]") || strings.Contains(got, "[NARRATIVE]") {
 		t.Errorf("marcadores vazaram:\n%s", got)
 	}
+	if logs.Len() != 0 {
+		t.Errorf("nível padrão (warn) não deveria logar um jogo sem falhas:\n%s", logs.String())
+	}
 
 	st, _ := storage.NewFileStore(data)
 	camp, err := st.LoadCampaign("cripta")
@@ -74,6 +78,12 @@ func TestPlay(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("saída sem %q:\n%s", want, got)
 		}
+	}
+	if !strings.Contains(logs.String(), "level=ERROR msg=llm.error provider=remote") {
+		t.Errorf("falha do provider deveria ir para o log (stderr):\n%s", logs.String())
+	}
+	if strings.Contains(out.String(), "llm.error") {
+		t.Error("log não pode sair no stdout")
 	}
 
 	// EOF pausou a sessão 2: a próxima execução a retoma, e a vez também.

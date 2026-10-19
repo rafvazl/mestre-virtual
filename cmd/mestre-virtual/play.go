@@ -12,7 +12,8 @@ import (
 
 	"github.com/rafvazl/mestre-virtual/internal/game"
 	"github.com/rafvazl/mestre-virtual/internal/knowledge"
-	"github.com/rafvazl/mestre-virtual/internal/llm/factory"
+	"github.com/rafvazl/mestre-virtual/internal/llm"
+	"github.com/rafvazl/mestre-virtual/internal/memory"
 	"github.com/rafvazl/mestre-virtual/internal/storage"
 )
 
@@ -24,13 +25,18 @@ Ctrl-C durante a narração cancela o turno sem aplicar nada.`
 //
 // /sair encerra a sessão. Fim da entrada (EOF/Ctrl-D) apenas pausa: o estado
 // já é salvo a cada turno e a sessão continua aberta para ser retomada.
-func cmdPlay(args []string, in io.Reader, out io.Writer) error {
+func cmdPlay(args []string, in io.Reader, out, errOut io.Writer) error {
 	var g globals
 	fs := newFlagSet("play", &g)
 	campID := fs.String("campaign", "", "ID da campanha (obrigatório)")
 	chars := fs.String("chars", "", "IDs dos personagens separados por vírgula (obrigatório ao criar a campanha)")
 	env := fs.String("env", "", "ID do ambiente inicial (obrigatório ao criar a campanha)")
+	memBudget := fs.Int("memory-budget", 400, "tokens de memória da aventura no prompt (0 desliga a memória)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	log, err := g.logger(errOut)
+	if err != nil {
 		return err
 	}
 	if *campID == "" {
@@ -44,12 +50,21 @@ func cmdPlay(args []string, in io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	prov, err := factory.New(factory.Config{Backend: g.backend, RemoteModel: g.model})
+	prov, err := g.provider(log)
 	if err != nil {
 		return err
 	}
-	eng, err := game.Open(game.Deps{Knowledge: ks, Campaigns: st, Characters: st, Provider: prov, Out: out},
-		game.Config{}, game.OpenOptions{CampaignID: *campID, CharacterIDs: splitList(*chars), EnvironmentID: *env})
+	deps := game.Deps{Knowledge: ks, Campaigns: st, Characters: st, Provider: prov, Out: out, Logger: log}
+	if *memBudget > 0 {
+		mem, err := memory.Open(g.dataDir)
+		if err != nil {
+			return err
+		}
+		deps.Memory = mem
+		deps.Compactor = &memory.Compactor{Store: mem, Summarizer: summarizer(g.backend, prov)}
+	}
+	eng, err := game.Open(deps, game.Config{MemoryBudget: *memBudget},
+		game.OpenOptions{CampaignID: *campID, CharacterIDs: splitList(*chars), EnvironmentID: *env})
 	if err != nil {
 		return err
 	}
@@ -119,6 +134,18 @@ func cmdPlay(args []string, in io.Reader, out io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(out, "\nEntrada encerrada; sessão pausada (use /sair para encerrá-la).")
+	return nil
+}
+
+// summarizer escolhe quem resume a sessão ao encerrá-la. Só o backend
+// remoto é um LLM de verdade; o eco local produziria um "resumo" sem
+// sentido, então ele (e o routing, que pode cair no local) usa o resumo
+// extrativo determinístico. Se o remoto falhar, o Compactor também cai no
+// extrativo.
+func summarizer(backend string, p llm.Provider) memory.Summarizer {
+	if backend == "remote" {
+		return memory.LLMSummarizer{Provider: p}
+	}
 	return nil
 }
 
