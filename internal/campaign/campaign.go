@@ -35,6 +35,13 @@ type LogEntry struct {
 	Text  string    `json:"text"`
 }
 
+// TurnState é a posição da iniciativa salva entre turnos: de quem é a vez e
+// em que rodada. Só é gravada com a máquina de turno em AguardandoInput.
+type TurnState struct {
+	Actor string `json:"actor"`
+	Round int    `json:"round"`
+}
+
 // Session é uma sessão de jogo.
 type Session struct {
 	Number        int        `json:"number"`
@@ -42,6 +49,9 @@ type Session struct {
 	StartedAt     time.Time  `json:"started_at"`
 	EndedAt       *time.Time `json:"ended_at,omitempty"`
 	Log           []LogEntry `json:"log"`
+	// Turn é opcional: sessões gravadas antes da Fase 4 não o têm e
+	// recomeçam do primeiro da iniciativa, na rodada 1.
+	Turn *TurnState `json:"turn,omitempty"`
 }
 
 // Active informa se a sessão está aberta.

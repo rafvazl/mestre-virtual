@@ -5,6 +5,11 @@
 // aplicados, é este código.
 //
 //	AguardandoInput → Resolvendo → Narrando → AplicandoEfeitos → ProximoTurno → AguardandoInput
+//
+// Além do ciclo normal há duas transições de exceção, explícitas:
+//
+//	Abort: Resolvendo|Narrando → AguardandoInput (turno desfeito, mesmo ator)
+//	Pass:  AguardandoInput → ProximoTurno       (ator passa a vez sem agir)
 package encounter
 
 import (
@@ -57,6 +62,9 @@ var ErrNoParticipants = errors.New("encounter: sem participantes")
 // TransitionHook é chamado após cada transição bem-sucedida.
 type TransitionHook func(from, to Phase, actor string)
 
+// ErrUnknownActor indica ator fora da ordem de iniciativa.
+var ErrUnknownActor = errors.New("encounter: ator fora da iniciativa")
+
 // TurnMachine controla fases e ordem de iniciativa.
 type TurnMachine struct {
 	order []string // IDs na ordem de iniciativa
@@ -64,6 +72,7 @@ type TurnMachine struct {
 	round int
 	phase Phase
 	hooks []TransitionHook
+	skip  func(actor string) bool
 }
 
 // NewTurnMachine cria a máquina com a ordem de iniciativa dada.
@@ -100,17 +109,100 @@ func (m *TurnMachine) To(target Phase) (Phase, error) {
 		return from, fmt.Errorf("%w: %s → %s", ErrInvalidTransition, from, target)
 	}
 	if from == ProximoTurno {
-		m.idx++
-		if m.idx >= len(m.order) {
-			m.idx = 0
-			m.round++
+		m.step()
+		m.settle()
+	}
+	m.set(from, target)
+	return target, nil
+}
+
+// Abort desfaz o turno em andamento (ex.: o LLM falhou ao narrar) e volta a
+// AguardandoInput com o mesmo ator. Só vale antes de AplicandoEfeitos:
+// depois disso o estado do jogo já pode ter mudado.
+func (m *TurnMachine) Abort() error {
+	from := m.phase
+	if from != Resolvendo && from != Narrando {
+		return fmt.Errorf("%w: abortar a partir de %s", ErrInvalidTransition, from)
+	}
+	m.set(from, AguardandoInput)
+	return nil
+}
+
+// Pass leva de AguardandoInput direto a ProximoTurno: o ator passa a vez
+// sem agir. Quem chama completa o ciclo com Advance.
+func (m *TurnMachine) Pass() error {
+	if m.phase != AguardandoInput {
+		return fmt.Errorf("%w: passar a vez a partir de %s", ErrInvalidTransition, m.phase)
+	}
+	m.set(AguardandoInput, ProximoTurno)
+	return nil
+}
+
+// SetSkip define quem perde a vez (ex.: personagem com PV 0). O ator pulado
+// continua na ordem de iniciativa e volta a jogar quando skip deixar de
+// valer para ele. Se o ator atual já deve ser pulado (em AguardandoInput), a
+// vez avança imediatamente, sem disparar hooks.
+func (m *TurnMachine) SetSkip(skip func(actor string) bool) {
+	m.skip = skip
+	if m.phase == AguardandoInput {
+		m.settle()
+	}
+}
+
+// Restore reposiciona a iniciativa em actor e round, para retomar uma sessão
+// salva. Só vale em AguardandoInput; round < 1 vira 1. Não dispara hooks.
+func (m *TurnMachine) Restore(actor string, round int) error {
+	if m.phase != AguardandoInput {
+		return fmt.Errorf("%w: restaurar a partir de %s", ErrInvalidTransition, m.phase)
+	}
+	i := m.index(actor)
+	if i < 0 {
+		return fmt.Errorf("%w: %q", ErrUnknownActor, actor)
+	}
+	m.idx, m.round = i, max(round, 1)
+	m.settle()
+	return nil
+}
+
+func (m *TurnMachine) set(from, to Phase) {
+	m.phase = to
+	for _, h := range m.hooks {
+		h(from, to, m.Current())
+	}
+}
+
+// step passa a vez ao próximo da ordem, incrementando a rodada na volta.
+func (m *TurnMachine) step() {
+	m.idx++
+	if m.idx >= len(m.order) {
+		m.idx = 0
+		m.round++
+	}
+}
+
+// settle pula atores marcados por skip. Se todos estiverem marcados, fica
+// onde começou, sem mexer na rodada (não há ninguém melhor para jogar).
+func (m *TurnMachine) settle() {
+	if m.skip == nil {
+		return
+	}
+	idx, round := m.idx, m.round
+	for range m.order {
+		if !m.skip(m.Current()) {
+			return
+		}
+		m.step()
+	}
+	m.idx, m.round = idx, round
+}
+
+func (m *TurnMachine) index(actor string) int {
+	for i, id := range m.order {
+		if id == actor {
+			return i
 		}
 	}
-	m.phase = target
-	for _, h := range m.hooks {
-		h(from, target, m.Current())
-	}
-	return target, nil
+	return -1
 }
 
 // Order devolve uma cópia da ordem de iniciativa.
