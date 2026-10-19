@@ -1,7 +1,9 @@
 package campaign
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,5 +42,31 @@ func TestAddCharacterIdempotent(t *testing.T) {
 	c.AddCharacter("a")
 	if len(c.CharacterIDs) != 1 {
 		t.Fatal(c.CharacterIDs)
+	}
+}
+
+func TestTurnStateJSONCompat(t *testing.T) {
+	// JSON anterior à Fase 4, sem "turn".
+	old := `{"id":"c1","name":"c1","character_ids":["aria"],"sessions":[{"number":1,"environment_id":"x","started_at":"2026-10-18T20:00:00Z","log":null}],"created_at":"2026-10-18T20:00:00Z"}`
+	var c Campaign
+	if err := json.Unmarshal([]byte(old), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Sessions[0].Turn != nil {
+		t.Fatalf("turn %+v", c.Sessions[0].Turn)
+	}
+	b, _ := json.Marshal(c)
+	if strings.Contains(string(b), `"turn"`) {
+		t.Fatalf("turn nil não deveria ser gravado: %s", b)
+	}
+
+	c.Sessions[0].Turn = &TurnState{Actor: "aria", Round: 2}
+	b, _ = json.Marshal(c)
+	var back Campaign
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if got := back.Sessions[0].Turn; got == nil || *got != (TurnState{Actor: "aria", Round: 2}) {
+		t.Fatalf("turn %+v", got)
 	}
 }

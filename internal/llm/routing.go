@@ -79,7 +79,8 @@ func (r *RoutingProvider) Stream(ctx context.Context, req Request) (<-chan Chunk
 
 	src, err := p.Stream(ctx, req)
 	if err != nil {
-		if fb == nil {
+		// Como em Generate: contexto cancelado não justifica tentar o fallback.
+		if fb == nil || ctx.Err() != nil {
 			return nil, err
 		}
 		return fb.Stream(ctx, req)

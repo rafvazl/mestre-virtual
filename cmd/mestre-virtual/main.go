@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/rafvazl/mestre-virtual/internal/knowledge"
 	"github.com/rafvazl/mestre-virtual/internal/llm"
 	"github.com/rafvazl/mestre-virtual/internal/llm/factory"
+	"github.com/rafvazl/mestre-virtual/internal/obs"
 	"github.com/rafvazl/mestre-virtual/internal/storage"
 )
 
@@ -31,18 +33,27 @@ Comandos:
   character create   cria um personagem a partir de uma classe
   character list     lista personagens salvos
   ask                envia um prompt ao LLM e mostra a resposta parseada
+  play               joga uma sessão interativa (loop de narração)
   version            mostra a versão
 
 Flags globais (depois do comando):
-  -content DIR   diretório da base de conhecimento (padrão: content)
-  -data DIR      diretório de estado (padrão: data)
-  -llm BACKEND   local | remote | routing (padrão: local)
+  -content DIR        diretório da base de conhecimento (padrão: content)
+  -data DIR           diretório de estado (padrão: data)
+  -llm BACKEND        local | remote | routing (padrão: local)
+  -log-level NÍVEL    debug | info | warn | error (padrão: warn); log vai para stderr
+  -log-format FORMATO text | json (padrão: text)
+
+Flags do play:
+  -campaign ID        campanha (criada se não existir)
+  -chars a,b          personagens da campanha (obrigatório ao criar)
+  -env ID             ambiente inicial (obrigatório ao criar)
+  -memory-budget N    tokens de memória da aventura no prompt (padrão: 400; 0 desliga)
 `
 
 var version = "0.2.0-dev"
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	if err := runIO(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "erro:", err)
 		os.Exit(1)
 	}
@@ -50,6 +61,7 @@ func main() {
 
 type globals struct {
 	contentDir, dataDir, backend, model string
+	logLevel, logFormat                 string
 }
 
 func newFlagSet(name string, g *globals) *flag.FlagSet {
@@ -58,10 +70,36 @@ func newFlagSet(name string, g *globals) *flag.FlagSet {
 	fs.StringVar(&g.dataDir, "data", "data", "diretório de estado")
 	fs.StringVar(&g.backend, "llm", "local", "backend de LLM: local|remote|routing")
 	fs.StringVar(&g.model, "model", "default", "modelo do backend remoto")
+	fs.StringVar(&g.logLevel, "log-level", "warn", "nível do log em stderr: debug|info|warn|error")
+	fs.StringVar(&g.logFormat, "log-format", "text", "formato do log: text|json")
 	return fs
 }
 
-func run(args []string, out io.Writer) error {
+// logger cria o logger das flags globais, escrevendo em w (stderr na CLI:
+// stdout fica livre para a narração).
+func (g globals) logger(w io.Writer) (*slog.Logger, error) {
+	level, err := obs.ParseLevel(g.logLevel)
+	if err != nil {
+		return nil, err
+	}
+	return obs.NewLogger(obs.Options{Level: level, Format: obs.Format(g.logFormat), Writer: w})
+}
+
+// provider monta o provider de LLM das flags globais, instrumentado com log.
+func (g globals) provider(log *slog.Logger) (llm.Provider, error) {
+	p, err := factory.New(factory.Config{Backend: g.backend, RemoteModel: g.model})
+	if err != nil {
+		return nil, err
+	}
+	return obs.NewLoggingProvider(p, log), nil
+}
+
+// run executa a CLI com stdin e stderr reais.
+func run(args []string, out io.Writer) error { return runIO(args, os.Stdin, out, os.Stderr) }
+
+// runIO é run com entrada (o REPL do play lê de in) e saída de log (errOut)
+// injetáveis.
+func runIO(args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Fprint(out, usage)
 		return nil
@@ -84,7 +122,9 @@ func run(args []string, out io.Writer) error {
 		}
 		return fmt.Errorf("subcomando desconhecido: character %s", args[1])
 	case "ask":
-		return cmdAsk(args[1:], out)
+		return cmdAsk(args[1:], out, errOut)
+	case "play":
+		return cmdPlay(args[1:], in, out, errOut)
 	}
 	return fmt.Errorf("comando desconhecido %q (veja: mestre-virtual help)", args[0])
 }
@@ -164,7 +204,7 @@ func cmdCharacterList(args []string, out io.Writer) error {
 	return nil
 }
 
-func cmdAsk(args []string, out io.Writer) error {
+func cmdAsk(args []string, out, errOut io.Writer) error {
 	var g globals
 	fs := newFlagSet("ask", &g)
 	if err := fs.Parse(args); err != nil {
@@ -174,7 +214,11 @@ func cmdAsk(args []string, out io.Writer) error {
 	if prompt == "" {
 		return errors.New("informe o prompt: mestre-virtual ask <texto>")
 	}
-	p, err := factory.New(factory.Config{Backend: g.backend, RemoteModel: g.model})
+	log, err := g.logger(errOut)
+	if err != nil {
+		return err
+	}
+	p, err := g.provider(log)
 	if err != nil {
 		return err
 	}

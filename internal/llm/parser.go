@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"bufio"
 	"fmt"
 	"strconv"
 	"strings"
@@ -61,11 +60,13 @@ func ParseResponse(raw string) (ParsedResponse, []error) {
 		section = "narrative"
 		narr    strings.Builder
 	)
-	sc := bufio.NewScanner(strings.NewReader(raw))
-	lineNo := 0
-	for sc.Scan() {
-		lineNo++
-		line := sc.Text()
+	// Divide por linhas sem bufio.Scanner: o Scanner tem limite de 64 KiB por
+	// linha e, ao estourar, parava em silêncio — a resposta inteira (inclusive
+	// [MECHANICS]) era descartada sem nenhum erro. "\r" final é removido para
+	// aceitar CRLF, como fazia o ScanLines.
+	for i, line := range strings.Split(raw, "\n") {
+		lineNo := i + 1
+		line = strings.TrimSuffix(line, "\r")
 		trimmed := strings.TrimSpace(line)
 		switch strings.ToUpper(trimmed) {
 		case "[NARRATIVE]":

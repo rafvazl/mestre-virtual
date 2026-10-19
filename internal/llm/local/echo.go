@@ -14,7 +14,9 @@ import (
 )
 
 // EchoProvider devolve uma resposta no contrato [NARRATIVE]/[MECHANICS]
-// ecoando o prompt. Útil para testes e para rodar a CLI offline.
+// ecoando a última linha não vazia do prompt — por convenção, a ação do
+// jogador (o contexto do turno vem antes dela). Útil para testes e para
+// rodar a CLI offline.
 type EchoProvider struct{}
 
 // NewEchoProvider cria um EchoProvider.
@@ -57,5 +59,9 @@ func (p *EchoProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.
 }
 
 func (p *EchoProvider) render(req llm.Request) string {
-	return fmt.Sprintf("[NARRATIVE]\nO mestre ouve: %s\n[MECHANICS]\n", strings.TrimSpace(req.Prompt))
+	prompt := strings.TrimSpace(req.Prompt)
+	if i := strings.LastIndexByte(prompt, '\n'); i >= 0 {
+		prompt = strings.TrimSpace(prompt[i+1:])
+	}
+	return fmt.Sprintf("[NARRATIVE]\nO mestre ouve: %s\n[MECHANICS]\n", prompt)
 }

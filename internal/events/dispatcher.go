@@ -2,11 +2,14 @@
 //
 // Não há broker (Kafka/NATS/SQS): a CLI é um único processo e a ordem dos
 // eventos importa para a narrativa. Handlers rodam na goroutine de quem
-// publica, na ordem de inscrição; um handler que falha não impede os outros.
+// publica, na ordem de inscrição; um handler que falha — com erro ou com
+// pânico — não impede os outros (ver docs/adr/0008).
 package events
 
 import (
 	"errors"
+	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -59,7 +62,13 @@ func (d *Dispatcher) SubscribeAll(h Handler) {
 	d.all = append(d.all, h)
 }
 
-// Publish entrega o evento a todos os handlers e agrega os erros.
+// ErrHandlerPanic indica que um handler entrou em pânico; Publish o converte
+// em erro (com a pilha) em vez de derrubar quem publicou.
+var ErrHandlerPanic = errors.New("events: pânico em handler")
+
+// Publish entrega o evento a todos os handlers e agrega os erros. Um pânico
+// num handler é recuperado e devolvido como erro que envolve ErrHandlerPanic;
+// os handlers seguintes continuam recebendo o evento.
 func (d *Dispatcher) Publish(e Event) error {
 	if e.At.IsZero() {
 		e.At = time.Now().UTC()
@@ -72,9 +81,19 @@ func (d *Dispatcher) Publish(e Event) error {
 
 	var errs []error
 	for _, h := range hs {
-		if err := h(e); err != nil {
+		if err := safeCall(h, e); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// safeCall chama h convertendo um pânico em erro.
+func safeCall(h Handler, e Event) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w (%s): %v\n%s", ErrHandlerPanic, e.Type, r, debug.Stack())
+		}
+	}()
+	return h(e)
 }

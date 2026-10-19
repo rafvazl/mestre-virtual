@@ -2,6 +2,7 @@ package events
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -25,5 +26,24 @@ func TestPublishOrderAndErrors(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("got %v", got)
 		}
+	}
+}
+
+func TestPublishRecoversHandlerPanic(t *testing.T) {
+	d := NewDispatcher()
+	var got []string
+	d.Subscribe(SessionEnded, func(Event) error { got = append(got, "antes"); return nil })
+	d.Subscribe(SessionEnded, func(Event) error { panic("boom") })
+	d.Subscribe(SessionEnded, func(Event) error { got = append(got, "depois"); return errors.New("falhou") })
+
+	err := d.Publish(Event{Type: SessionEnded})
+	if !errors.Is(err, ErrHandlerPanic) {
+		t.Fatalf("err = %v", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "boom") || !strings.Contains(msg, "session.ended") || !strings.Contains(msg, "falhou") {
+		t.Errorf("mensagem sem contexto: %s", msg)
+	}
+	if len(got) != 2 || got[0] != "antes" || got[1] != "depois" {
+		t.Errorf("handlers chamados: %v", got)
 	}
 }
