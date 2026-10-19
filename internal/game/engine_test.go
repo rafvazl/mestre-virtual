@@ -1,10 +1,12 @@
 package game
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,8 +14,11 @@ import (
 
 	"github.com/rafvazl/mestre-virtual/internal/campaign"
 	"github.com/rafvazl/mestre-virtual/internal/character"
+	"github.com/rafvazl/mestre-virtual/internal/events"
 	"github.com/rafvazl/mestre-virtual/internal/knowledge"
 	"github.com/rafvazl/mestre-virtual/internal/llm"
+	"github.com/rafvazl/mestre-virtual/internal/memory"
+	"github.com/rafvazl/mestre-virtual/internal/obs"
 	"github.com/rafvazl/mestre-virtual/internal/storage"
 )
 
@@ -69,7 +74,12 @@ type fakeProvider struct {
 	text     string
 	startErr error // falha antes do stream
 	midErr   error // falha depois do primeiro chunk
-	last     llm.Request
+	// afterFirst, se presente, roda depois do envio do primeiro chunk (ex.:
+	// cancelar o contexto). O fake então observa ctx e fecha o canal "limpo",
+	// sem Chunk de erro — o pior caso do contrato de cancelamento.
+	afterFirst func()
+	last       llm.Request
+	calls      int
 }
 
 func (p *fakeProvider) Name() string { return "fake" }
@@ -78,19 +88,28 @@ func (p *fakeProvider) Generate(context.Context, llm.Request) (llm.Response, err
 	return llm.Response{}, errors.New("não usado")
 }
 
-func (p *fakeProvider) Stream(_ context.Context, req llm.Request) (<-chan llm.Chunk, error) {
+func (p *fakeProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chunk, error) {
 	p.last = req
+	p.calls++
 	if p.startErr != nil {
 		return nil, p.startErr
 	}
 	ch := make(chan llm.Chunk)
+	text, midErr, afterFirst := p.text, p.midErr, p.afterFirst
 	go func() {
 		defer close(ch)
-		for i := 0; i < len(p.text); i += 4 {
-			ch <- llm.Chunk{Text: p.text[i:min(i+4, len(p.text))]}
-			if p.midErr != nil {
-				ch <- llm.Chunk{Err: p.midErr}
+		for i := 0; i < len(text); i += 4 {
+			select {
+			case <-ctx.Done():
 				return
+			case ch <- llm.Chunk{Text: text[i:min(i+4, len(text))]}:
+			}
+			if midErr != nil {
+				ch <- llm.Chunk{Err: midErr}
+				return
+			}
+			if i == 0 && afterFirst != nil {
+				afterFirst()
 			}
 		}
 	}()
@@ -104,21 +123,37 @@ type fixture struct {
 	store *memStore
 	prov  *fakeProvider
 	out   *strings.Builder
+	logs  *bytes.Buffer
 	eng   *Engine
+
+	// Opcionais, usados em open (configure antes, via newFixtureWith).
+	bus  *events.Dispatcher
+	mem  memory.Memory
+	comp *memory.Compactor
 }
 
 func newFixture(t *testing.T, response string) *fixture {
+	return newFixtureWith(t, response, nil)
+}
+
+// newFixtureWith cria aria (guerreiro, PV 12) e bruno (mago, PV 7), deixa
+// setup ajustar a fixture e abre a campanha "cripta" com os dois.
+func newFixtureWith(t *testing.T, response string, setup func(*fixture)) *fixture {
 	t.Helper()
 	ks, err := knowledge.NewFileStore(filepath.Join("..", "..", "content"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{ks: ks, store: newMemStore(), prov: &fakeProvider{text: response}, out: &strings.Builder{}}
+	f := &fixture{ks: ks, store: newMemStore(), prov: &fakeProvider{text: response},
+		out: &strings.Builder{}, logs: &bytes.Buffer{}}
 	for _, c := range []struct{ id, name, class string }{{"aria", "Aria", "guerreiro"}, {"bruno", "Bruno", "mago"}} {
 		cl, _ := ks.Class(c.class)
 		if err := f.store.SaveCharacter(character.New(c.id, c.name, cl)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if setup != nil {
+		setup(f)
 	}
 	f.eng = f.open(t, OpenOptions{CampaignID: "cripta", CharacterIDs: []string{"aria", "bruno"}, EnvironmentID: "entrada-cripta"})
 	return f
@@ -126,7 +161,9 @@ func newFixture(t *testing.T, response string) *fixture {
 
 func (f *fixture) open(t *testing.T, opts OpenOptions) *Engine {
 	t.Helper()
-	eng, err := Open(Deps{Knowledge: f.ks, Campaigns: f.store, Characters: f.store, Provider: f.prov, Out: f.out},
+	logger, _ := obs.NewLogger(obs.Options{Level: slog.LevelDebug, Writer: f.logs})
+	eng, err := Open(Deps{Knowledge: f.ks, Campaigns: f.store, Characters: f.store, Provider: f.prov, Out: f.out,
+		Events: f.bus, Memory: f.mem, Compactor: f.comp, Logger: logger},
 		Config{MaxHPDelta: 10, HistorySize: 4, Now: func() time.Time { return testNow }}, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +187,7 @@ HP_CHANGE target=aria
 
 func TestPlayTurnValidatesAndApplies(t *testing.T) {
 	f := newFixture(t, mixedResponse)
-	res, err := f.eng.PlayTurn(context.Background(), "aria", "  abro a porta  ")
+	res, err := f.eng.PlayTurn(context.Background(), "  abro a porta  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +261,7 @@ func TestPlayTurnProviderFailureKeepsState(t *testing.T) {
 			savesBefore := f.store.saves
 			campBefore := string(f.store.camps["cripta"])
 
-			_, err := f.eng.PlayTurn(context.Background(), "aria", "ataco")
+			_, err := f.eng.PlayTurn(context.Background(), "ataco")
 			if !errors.Is(err, ErrGeneration) {
 				t.Fatalf("err = %v", err)
 			}
@@ -247,23 +284,24 @@ func TestPlayTurnProviderFailureKeepsState(t *testing.T) {
 
 func TestPlayTurnInputErrors(t *testing.T) {
 	f := newFixture(t, mixedResponse)
-	if _, err := f.eng.PlayTurn(context.Background(), "aria", "   "); !errors.Is(err, ErrEmptyInput) {
+	if _, err := f.eng.PlayTurn(context.Background(), "   "); !errors.Is(err, ErrEmptyInput) {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := f.eng.PlayTurn(context.Background(), "goblin", "oi"); !errors.Is(err, ErrUnknownActor) {
-		t.Errorf("err = %v", err)
+	if f.eng.Current() != "aria" || f.prov.calls != 0 {
+		t.Errorf("entrada vazia não deveria consumir o turno: vez de %s, %d chamadas", f.eng.Current(), f.prov.calls)
 	}
 }
 
 func TestPromptContents(t *testing.T) {
 	f := newFixture(t, "[NARRATIVE]\nok\n[MECHANICS]\n")
 	ctx := context.Background()
+	// Iniciativa: aria, bruno, aria, bruno.
 	for i := range 3 {
-		if _, err := f.eng.PlayTurn(ctx, "aria", fmt.Sprintf("ação %d", i)); err != nil {
+		if _, err := f.eng.PlayTurn(ctx, fmt.Sprintf("ação %d", i)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := f.eng.PlayTurn(ctx, "bruno", "acendo a\ntocha"); err != nil {
+	if _, err := f.eng.PlayTurn(ctx, "acendo a\ntocha"); err != nil {
 		t.Fatal(err)
 	}
 	req := f.prov.last
@@ -283,8 +321,9 @@ func TestPromptContents(t *testing.T) {
 			t.Errorf("prompt sem %q:\n%s", want, req.Prompt)
 		}
 	}
-	// HistorySize = 4: as entradas da primeira ação já saíram do prompt.
-	if strings.Contains(req.Prompt, "ação 0") {
+	// HistorySize = 4: as entradas da primeira ação já saíram do prompt;
+	// sem Deps.Memory não há seção de memória.
+	if strings.Contains(req.Prompt, "ação 0") || strings.Contains(req.Prompt, "Memória da aventura") {
 		t.Errorf("histórico deveria ter só as últimas 4 entradas:\n%s", req.Prompt)
 	}
 	lines := strings.Split(req.Prompt, "\n")

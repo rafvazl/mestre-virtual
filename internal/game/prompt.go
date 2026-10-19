@@ -43,14 +43,28 @@ func buildSystem(maxHPDelta int) string {
 	return fmt.Sprintf(systemPrompt, maxHPDelta)
 }
 
+// memoryHeader abre o bloco de memória (memory.ContextBuilder.Header) logo
+// abaixo do título da seção.
+const memoryHeader = "(registros de sessões anteriores e desta, relevantes para a ação, em ordem cronológica)"
+
+// promptData é o conteúdo variável do prompt de um turno.
+type promptData struct {
+	env     knowledge.Environment
+	party   []*character.Character
+	memory  string // bloco de memory.ContextBuilder; "" = sem a seção
+	history []campaign.LogEntry
+	actor   *character.Character
+	input   string
+}
+
 // buildPrompt monta o conteúdo do turno: ambiente, grupo, itens conhecidos,
-// histórico recente e, por último, a ação do jogador.
+// memória da aventura, histórico recente e, por último, a ação do jogador.
 //
 // A ação fica sempre na última linha: além de ser o que o modelo deve
 // responder, é o que o EchoProvider ecoa no modo offline.
-func buildPrompt(ks knowledge.Store, env knowledge.Environment, party []*character.Character,
-	history []campaign.LogEntry, actor *character.Character, input string) string {
+func buildPrompt(ks knowledge.Store, d promptData) string {
 	var b strings.Builder
+	env := d.env
 
 	b.WriteString("## Ambiente atual\n")
 	fmt.Fprintf(&b, "%s (%s): %s\n", env.Name, env.ID, env.Description)
@@ -62,7 +76,7 @@ func buildPrompt(ks knowledge.Store, env knowledge.Environment, party []*charact
 	}
 
 	b.WriteString("\n## Grupo\n")
-	for _, c := range party {
+	for _, c := range d.party {
 		fmt.Fprintf(&b, "- %s\n", describeCharacter(ks, c))
 	}
 
@@ -73,15 +87,21 @@ func buildPrompt(ks knowledge.Store, env knowledge.Environment, party []*charact
 		}
 	}
 
-	if len(history) > 0 {
+	if m := strings.TrimSpace(d.memory); m != "" {
+		b.WriteString("\n## Memória da aventura\n")
+		b.WriteString(m)
+		b.WriteString("\n")
+	}
+
+	if len(d.history) > 0 {
 		b.WriteString("\n## Histórico recente\n")
-		for _, e := range history {
+		for _, e := range d.history {
 			fmt.Fprintf(&b, "- [%s] %s: %s\n", e.Kind, e.Actor, oneLine(e.Text))
 		}
 	}
 
 	b.WriteString("\n## Ação do jogador\n")
-	fmt.Fprintf(&b, "%s (%s): %s", actor.Name, actor.ID, oneLine(input))
+	fmt.Fprintf(&b, "%s (%s): %s", d.actor.Name, d.actor.ID, oneLine(d.input))
 	return b.String()
 }
 

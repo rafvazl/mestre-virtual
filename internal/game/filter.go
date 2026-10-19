@@ -61,6 +61,13 @@ func (f *narrationFilter) Flush() {
 	}
 }
 
+// dropPending descarta a linha retida (ainda não mostrada), para que um
+// stream cancelado não libere texto no Flush.
+func (f *narrationFilter) dropPending() {
+	f.pending.Reset()
+	f.blank.Reset()
+}
+
 func (f *narrationFilter) partial(s string) {
 	if s == "" {
 		return
