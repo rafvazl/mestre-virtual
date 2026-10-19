@@ -31,12 +31,18 @@ Comandos:
   character create   cria um personagem a partir de uma classe
   character list     lista personagens salvos
   ask                envia um prompt ao LLM e mostra a resposta parseada
+  play               joga uma sessão interativa (loop de narração)
   version            mostra a versão
 
 Flags globais (depois do comando):
   -content DIR   diretório da base de conhecimento (padrão: content)
   -data DIR      diretório de estado (padrão: data)
   -llm BACKEND   local | remote | routing (padrão: local)
+
+Flags do play:
+  -campaign ID   campanha (criada se não existir)
+  -chars a,b     personagens da campanha (obrigatório ao criar)
+  -env ID        ambiente inicial (obrigatório ao criar)
 `
 
 var version = "0.2.0-dev"
@@ -61,7 +67,10 @@ func newFlagSet(name string, g *globals) *flag.FlagSet {
 	return fs
 }
 
-func run(args []string, out io.Writer) error {
+func run(args []string, out io.Writer) error { return runIO(args, os.Stdin, out) }
+
+// runIO é run com a entrada injetável (o REPL do play lê de in).
+func runIO(args []string, in io.Reader, out io.Writer) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Fprint(out, usage)
 		return nil
@@ -85,6 +94,8 @@ func run(args []string, out io.Writer) error {
 		return fmt.Errorf("subcomando desconhecido: character %s", args[1])
 	case "ask":
 		return cmdAsk(args[1:], out)
+	case "play":
+		return cmdPlay(args[1:], in, out)
 	}
 	return fmt.Errorf("comando desconhecido %q (veja: mestre-virtual help)", args[0])
 }
