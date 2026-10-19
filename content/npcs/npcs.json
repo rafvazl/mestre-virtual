@@ -1,0 +1,4 @@
+[
+  {"id": "esqueleto", "name": "Esqueleto", "description": "Ossos animados por magia necromântica.", "personality": "Silencioso e implacável.", "hp": 8, "hostile": true, "loot": ["moeda-ouro"]},
+  {"id": "velho-guardiao", "name": "Velho guardião", "description": "Ancião que vigia a cripta há décadas.", "personality": "Desconfiado, fala por enigmas, mas ajuda quem demonstra respeito.", "hp": 6, "hostile": false, "loot": ["tocha"]}
+]
